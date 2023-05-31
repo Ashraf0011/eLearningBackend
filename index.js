@@ -5,6 +5,7 @@ const cors = require("cors");
 require("dotenv").config();
 
 const serverRoutes = require("./api/ServerRoutes");
+const cookieParser = require('cookie-parser');
 
 
 const port = 3000;
@@ -28,7 +29,7 @@ app.use(cors(
 
 app.use(json());
 app.use(express.urlencoded({ extended: false }))
-
+app.use(cookieParser());
 mongoose.set("strictQuery", false);
 
 main().catch((er) => { console.log(er); })

@@ -11,6 +11,10 @@ const CourseSCHEMA = new Schema({
   courseRating: { type: Number },
   videoIDs: { type: Object },
   mentorID: { type: String },
+  mentorName: { type: String },
+  category: { type: String },
+  lessons: { type: Number },
+  hours: { type: Number },
 }, { collection: "courseData" })
 
 module.exports = mongoose.model("COURSE_SCHEMA", CourseSCHEMA);

@@ -1,12 +1,12 @@
 const express = require("express");
 const { Router } = require("express");
 const COURSE_SCHEMA = require("./CourseSchema")
-const STUDENT_SCHEMA = require("./StudentSchema")
-const MENTORS_SCHEMA = require("./MentorsSchema");
 const jwt = require("jsonwebtoken");
 const Joi = require("joi");
 const bcrypt = require("bcrypt");
 const { validateProfileSignUp, PROFILE } = require("./SignUpSchema");
+const { validateUserProfile, validateLogin, USERPROFILE, } = require("./UsersSchema");
+const { NOTES_SCHEMA, validateNotes } = require("./NotesSchema");
 
 
 const serverRoutes = Router();
@@ -29,7 +29,7 @@ serverRoutes.route("/api/courses").get((req, res) => {
     .catch(e => { res.send(e) })
 })
 
-serverRoutes.route("/api/courses/create").post((req, res) => {
+serverRoutes.route("/api/courses").post((req, res) => {
   console.log("Create request Recieved for", req.body);
   COURSE_SCHEMA.create(req.body)
     .then((data) => { res.send(data) })
@@ -49,45 +49,68 @@ serverRoutes.route("/api/mentors").get((req, res) => {
 
 
 /**
- * Students Signup
+ * get users
  */
-serverRoutes.route("/api/students").get(async (req, res) => {
-  await STUDENT_SCHEMA.find()
-    .then((data) => { res.send(data) })
-    .catch(e => { res.send(e) })
+serverRoutes.route("/api/users").get(async (req, res) => {
+  try {
+    const users = await USERPROFILE.find().select("-password").lean()
+    if (!users?.length) {
+      return res.status(400).json({ message: "No users not Found!" })
+    }
+    res.status(200).json(users)
+  } catch (err) {
+    res.send(err)
+  }
 })
 
-serverRoutes.route('/api/signup').post(async (req, res) => {
-  console.log("signup info", req.body);
-  const { email, password, firstName, lastName, phone } = req.body;
 
+/**
+ * USER SIGNUP
+ */
+serverRoutes.route('/api/users').post(async (req, res) => {
+  console.log("signup info", req.body);
+  const { email, password, firstName, lastName, phone, role } = req.body;
 
   const { error } = validateProfileSignUp(req.body);
   if (error) {
-    return res.status(400).json({ message: `here error is: ${error}` });
+    return res.status(400).json({ message: "All fields are required" });
   }
 
-  const _existingUser = await STUDENT_SCHEMA.findOne({ email: req.body.email });
+  // if existing
+  const _existingUser = await USERPROFILE.findOne({ email }).lean().exec()
   if (_existingUser) {
-    return res.status(409).statusMessage("user already exist with this email, use another email or try resetting password")
+    return res.status(409).statusMessage("User already exist with this email, use another email or try resetting password")
   }
 
-  const hsahedPassword = await bcrypt.hash(password, 12);
-  const userInformation = { firstName, lastName, email, phone, password: hsahedPassword, userType: "student", userID: `${email}` }
-  await STUDENT_SCHEMA.create(userInformation)
-    .then((data) => res.status(200).json({ message: "Account successfully created for", data }))
-    .catch((e) => res.json({ status: 400, message: e }));
+  // Hash password
+  const hsahedPassword = await bcrypt.hash(password, 12); // 12 salt rounds
+  const userInformation = { firstName, lastName, email, phone, "password": hsahedPassword, userID: `${email}`, role }
+
+  // create user
+  try {
+    const user = await USERPROFILE.create(userInformation)
+    if (user) {
+      res.status(200).json({ message: `Account successfully created for: ${user.firstName}` })
+    }
+  } catch (e) {
+    res.status(400).json({ message: "invalid user data" })
+  }
 })
 
-serverRoutes.route("/api/login").post(async (req, res) => {
+/***
+ * USER LOGIN
+ *
+ *  ***/
+
+serverRoutes.route("/api/users").post(async (req, res) => {
   try {
+    console.log("trying to log you in");
     const { error } = validateLogin(req.body);
     if (error)
       return res.status(400).json({ message: `here error is: ${error}` });
 
-
     const { email, password } = req.body
-    const _existedUser = await STUDENT_SCHEMA.findOne({ email: email });
+    const _existedUser = await PROFILE.findOne({ email: email });
     console.log("user found", _existedUser);
 
     if (!_existedUser)
@@ -97,16 +120,16 @@ serverRoutes.route("/api/login").post(async (req, res) => {
       password,
       _existedUser.password
     );
-
     if (!validPass)
       return res.status(401).json({ message: "Wrong password" });
 
 
-    const { _id: id, firstName } = _existedUser;
+    const token = jwt.sign({ email }, process.env.JWT_PRIVATE_KEY, { expiresIn: "1d" })
 
-    const token = jwt.sign({ id, firstName }, process.env.JWT_PRIVATE_KEY, { expiresIn: "1d" })
-
-    res.status(200).send({ data: token, message: "Login Successful" });
+    res.status(200).send({
+      token: token,
+      message: "Login Successful"
+    });
 
 
   }
@@ -116,17 +139,151 @@ serverRoutes.route("/api/login").post(async (req, res) => {
   }
 })
 
-const validateLogin = (data) => {
-  const schema = Joi.object({
-    email: Joi.string().email().required().label("email"),
-    password: Joi.string().required().label("password")
-  })
+/**
+ * UPDATE USER
+ */
 
-  return schema.validateAsync(data);
-}
+serverRoutes.route("/api/users").patch(async (req, res) => {
+  console.log("try update");
+  const { email, firstName, lastName, password, phone } = req.body;
+
+  // update
+  try {
+    // email is used as userID
+    const user = await USERPROFILE.findOne({ email }).exec();
+    if (!user?.length) {
+      return res.status(400).json({ message: "user not found in database" });
+    }
+
+    // updating values recieved
+    user.firstName = firstName;
+    user.lastName = lastName;
+    user.phone = phone;
+
+    if (password) {
+      user.password = await bcrypt.hash(password, 12); // 12 salt rounds
+    }
+
+    const updatedUser = await user.save();
+    console.log("updated successfull");
+    res.status(200).json({ message: `${updatedUser.firstName} ${updatedUser.lastName},${updatedUser.phone} and password updated.` })
+  } catch (e) {
+    res.send(e);
+  }
+})
+
+
+/**
+ * DELETE USER
+ */
+
+serverRoutes.route("/api/users").delete(async (req, res) => {
+  console.log("try delete");
+  const { email, password, userID } = req.body;
+
+  // validate data
+
+  if (!email || !password || userID) {
+    return res.status(400).json({ message: "All fields are required" });
+  }
+
+  // delete
+  try {
+    const user = await USERPROFILE.findById({ userID }).exec();
+    if (!user) {
+      return res.status(400).json({ message: "user not found in database" });
+    }
+
+    const result = await user.deleteOne();
+    res.status(200).json({ message: `${result.firstName} was deleted.` })
+
+  } catch (e) {
+    res.send(e);
+  }
+})
+
+/***
+ * Notes Get using post
+ */
+
+serverRoutes.post("/api/notes/get", async (req, res) => {
+  try {
+    console.log("getting all notes for current video");
+    const { videoID, userID } = req.body;
+    // const result = await NOTES_SCHEMA.find().exec()
+    const result = await NOTES_SCHEMA.find()
+      .where({ videoID: videoID })
+      .where({ userID: userID }).exec()
+    if (!result?.length) {
+      return res.status(400).json({ message: "No notes found" })
+    }
+    res.status(200).json(result);
+  }
+  catch (e) {
+    res.status(500).json({ message: `Unexpected Error at${e}` })
+  }
+})
+/***
+ * Notes Create
+ */
+serverRoutes.post("/api/notes", async (req, res) => {
+  try {
+    console.log("Taking a new Note");
+    const { videoID, userID, time, text } = req.body;
+    const { error } = validateNotes(req.body);
+
+    if (error) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    const result = await NOTES_SCHEMA.create({ videoID, userID, time, text });
+
+    console.log("Noted created", result);
+    res.status(200).json({ message: `Note was added` })
+  }
+  catch (e) {
+    res.status(500).json({ message: `Unexpected Error at${e}` })
+  }
+})
 
 
 
+serverRoutes.patch("/api/notes", async (req, res) => {
+  try {
+    console.log("updating");
+    const { _id, time, text } = req.body;
+    const _existingNote = await NOTES_SCHEMA.findOne({ _id }).exec();
+    if (!_existingNote) {
+      return res.status(404).json({ message: "No notes found" })
+    }
+    _existingNote.time = time;
+    _existingNote.text = text;
+    const updatedNote = await _existingNote.save();
+
+    res.status(200).json({ message: `Selected note was updated ${updatedNote.text}` })
+  }
+  catch (e) {
+    res.status(500).json({ message: `Unexpected Error ${e}` })
+  }
+})
+
+
+serverRoutes.delete("/api/notes", async (req, res) => {
+  try {
+    console.log("deleting");
+    const { _id } = req.body
+    const note = await NOTES_SCHEMA.findOne({ _id: _id }).exec();
+    console.log("note", note);
+    if (!note?.length) {
+      return res.status(404).json({ message: "No such notes exist" })
+    }
+    const deleted = await note.deleteOne()
+    res.status(200).json({ message: `Following Notes were deleted ${deleted}` })
+  }
+  catch (e) {
+    res.status(500).json({ message: `Unexpected Error at${e}` })
+  }
+})
 
 
 

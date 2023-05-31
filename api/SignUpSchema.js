@@ -9,15 +9,17 @@ const Profile = new Schema({
   email: { type: String, required: true },
   phone: { type: String, required: true },
   password: { type: String, required: true },
+  role: { type: String, required: true }
 })
 
 const validateProfileSignUp = (data) => {
   const schema = Joi.object({
     firstName: Joi.string().required().label("First Name"),
     lastName: Joi.string().required().label("Last Name"),
-    email: Joi.string().email().required().label("email"),
+    email: Joi.string().email().required().label("Email"),
     phone: Joi.string().required().label("Phone"),
-    password: passwordComplexity().required().label("password")
+    password: passwordComplexity().required().label("Password"),
+    role: Joi.string().required().label("Role")
   })
 
   return schema.validate(data);
